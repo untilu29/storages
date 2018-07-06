@@ -10,10 +10,10 @@ DECLARE
    idx int default 0;
 
 BEGIN
-   OPEN _curs FOR EXECUTE 'SELECT stop_id, stop_sequence from tdi_smrt.gtfs_stop_times
+   OPEN _curs FOR EXECUTE 'SELECT  id,stop_id, stop_sequence from tdi_smrt.gtfs_stop_times
 group by id, stop_id, stop_sequence
 ORDER BY  id, stop_sequence
-limit 1000'  FOR UPDATE;
+limit 495'  FOR UPDATE;
 
    LOOP
       FETCH NEXT FROM _curs INTO rec;
@@ -25,6 +25,7 @@ limit 1000'  FOR UPDATE;
 			--	 EXECUTE ''
     --  USING rec.ctid;
 		--		IF rec.stop_id LIKE 'EW%' THEN 
+       RAISE NOTICE 'Update for %', _curs; 
          IF pre_seq > rec.stop_sequence THEN
   --				datas := datas || rec.stop_id || ':' || rec.stop_sequence || ',';
    --           datas := datas || idx::text || ',';
@@ -34,6 +35,8 @@ limit 1000'  FOR UPDATE;
 				END IF;
             trip := trip ||  rec.stop_id;
            pre_seq:= rec.stop_sequence;
+       UPDATE tdi_smrt.gtfs_stop_times SET trip_index = idx WHERE id = rec.id;
+
    END LOOP;
 	 RETURN datas;
 END 
@@ -41,3 +44,14 @@ $func$  LANGUAGE plpgsql;
 
 
 SELECT f_curs1('123');
+
+
+select * from tdi_smrt.gtfs_stop_times WHERE trip_index is not null limit 500
+
+
+select  min(arrival_time), array_agg(stop_id), trip_index from tdi_smrt.gtfs_stop_times
+WHERE trip_index is not null 
+GROUP BY trip_index
+ORDER BY trip_index
+
+
