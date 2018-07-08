@@ -7,7 +7,7 @@ CREATE OR REPLACE FUNCTION trip_substitute(_version text, _limit INT)
  RETURNS text AS 
 $func$
 DECLARE
-   _curs CURSOR;
+   _curs refcursor;
    rec record;
    pre_seq INT DEFAULT 0;
    trip TEXT DEFAULT '';
@@ -17,10 +17,10 @@ DECLARE
 BEGIN
    OPEN _curs FOR EXECUTE 
    FORMAT('SELECT  id,stop_id, stop_sequence from tdi_smrt.gtfs_stop_times
-											WHERE version = ' || quote_literal('%s') || ' 
-											GROUP BY id, stop_id, stop_sequence
-											ORDER BY  id, stop_sequence
-											LIMIT %s',_version, _limit)  
+	   WHERE version = ' || quote_literal('%s') || ' 
+	   GROUP BY id, stop_id, stop_sequence
+	   ORDER BY  id, stop_sequence
+	   LIMIT %s',_version, _limit)  
     FOR UPDATE;
 
    LOOP
@@ -32,7 +32,7 @@ BEGIN
        RAISE NOTICE 'Update for %', _curs; 
          IF pre_seq > rec.stop_sequence THEN
   --				datas := datas || rec.stop_id || ':' || rec.stop_sequence || ',';
-   --           datas := datas || idx::text || ',';
+  --           datas := datas || idx::text || ',';
          idx:= idx+1;
          datas := datas || trip|| '--';
          trip:= '';
@@ -49,22 +49,40 @@ END
 $func$  LANGUAGE plpgsql;
 
 
-SELECT trip_substitute('smrt_sg_bus', 100);
+SELECT trip_substitute('smrt_sg_bus', 495);
 
 
 SELECT * 
   FROM   tdi_smrt.gtfs_stop_times 
   WHERE  trip_index IS NOT NULL 
+			ORDER BY id, trip_index
 
-WITH trip_split_
-  
+
+BEGIN;
+ALTER TABLE tdi_smrt.gtfs_stop_times DISABLE TRIGGER postgres; 
+ALTER TABLE tdi_smrt.gtfs_stop_times ENABLE TRIGGER postgres;
+COMMIT;
+VACUUM FULL tdi_smrt.gtfs_stop_times;
+
+
+WITH trip_index_generate AS (
 SELECT    md5(min(arrival_time) || '/' 
                     || array_to_string(array_agg(stop_id),'-')) AS trip_id,
-								   min(arrival_time) || '/' 
+           min(arrival_time) || '/' 
                     || array_to_string(array_agg(stop_id),'-') AS journey,
-									trip_index                                                     AS index 
+	   trip_index                                                     
   FROM     tdi_smrt.gtfs_stop_times 
   WHERE    trip_index IS NOT NULL 
-  AND          version = 'smrt_sg_bus' 
+  AND      VERSION = 'smrt_sg_bus' 
   GROUP BY trip_index 
-  ORDER BY trip_index
+  ORDER BY  trip_index
+)
+
+UPDATE tdi_smrt.gtfs_stop_times st
+	SET trip_id = stg.trip_id
+FROM 
+        trip_index_generate stg
+WHERE
+    st.trip_index = stg.trip_index
+AND st.trip_index IS NOT NULL 
+AND st.VERSION = 'smrt_sg_bus';
