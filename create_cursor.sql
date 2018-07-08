@@ -1,8 +1,13 @@
-CREATE OR REPLACE FUNCTION f_curs1(_tbl text)
+ALTER TABLE gtfs_stop_times ADD COLUMN id SERIAL PRIMARY KEY;
+ALTER TABLE gtfs_stop_times ADD COLUMN trip_index INT;
+CREATE UNIQUE INDEX id_index ON gtfs_stop_times (id);
+CREATE UNIQUE INDEX trip_index ON gtfs_stop_times (trip_index);
+
+CREATE OR REPLACE FUNCTION trip_substitute(_version text, _limit INT)
  RETURNS text AS 
 $func$
 DECLARE
-   _curs refcursor;
+   _curs CURSOR;
    rec record;
    pre_seq INT DEFAULT 0;
    trip TEXT DEFAULT '';
@@ -10,32 +15,33 @@ DECLARE
    idx int default 0;
 
 BEGIN
-   OPEN _curs FOR EXECUTE 'SELECT  id,stop_id, stop_sequence from tdi_smrt.gtfs_stop_times
-group by id, stop_id, stop_sequence
-ORDER BY  id, stop_sequence
-limit 495'  FOR UPDATE;
+   OPEN _curs FOR EXECUTE 
+   FORMAT('SELECT  id,stop_id, stop_sequence from tdi_smrt.gtfs_stop_times
+											WHERE version = ' || quote_literal('%s') || ' 
+											GROUP BY id, stop_id, stop_sequence
+											ORDER BY  id, stop_sequence
+											LIMIT %s',_version, _limit)  
+    FOR UPDATE;
 
    LOOP
       FETCH NEXT FROM _curs INTO rec;
       EXIT WHEN rec IS NULL;
 
    --   RAISE NOTICE '%', rec.tbl_id;
-
- --     EXECUTE format('UPDATE %I SET tbl_id = tbl_id + 10 WHERE ctid = $1', _tbl)
-			--	 EXECUTE ''
-    --  USING rec.ctid;
 		--		IF rec.stop_id LIKE 'EW%' THEN 
        RAISE NOTICE 'Update for %', _curs; 
          IF pre_seq > rec.stop_sequence THEN
   --				datas := datas || rec.stop_id || ':' || rec.stop_sequence || ',';
    --           datas := datas || idx::text || ',';
          idx:= idx+1;
-         datas := datas || trip|| '----';
+         datas := datas || trip|| '--';
          trip:= '';
 				END IF;
             trip := trip ||  rec.stop_id;
            pre_seq:= rec.stop_sequence;
-       UPDATE tdi_smrt.gtfs_stop_times SET trip_index = idx WHERE id = rec.id;
+        UPDATE tdi_smrt.gtfs_stop_times 
+			  SET trip_index = idx 
+			  WHERE id = rec.id and VERSION = _version;
 
    END LOOP;
 	 RETURN datas;
@@ -43,15 +49,22 @@ END
 $func$  LANGUAGE plpgsql;
 
 
-SELECT f_curs1('123');
+SELECT trip_substitute('smrt_sg_bus', 100);
 
 
-select * from tdi_smrt.gtfs_stop_times WHERE trip_index is not null limit 500
+SELECT * 
+  FROM   tdi_smrt.gtfs_stop_times 
+  WHERE  trip_index IS NOT NULL 
 
-
-select  min(arrival_time), array_agg(stop_id), trip_index from tdi_smrt.gtfs_stop_times
-WHERE trip_index is not null 
-GROUP BY trip_index
-ORDER BY trip_index
-
-
+WITH trip_split_
+  
+SELECT    md5(min(arrival_time) || '/' 
+                    || array_to_string(array_agg(stop_id),'-')) AS trip_id,
+								   min(arrival_time) || '/' 
+                    || array_to_string(array_agg(stop_id),'-') AS journey,
+									trip_index                                                     AS index 
+  FROM     tdi_smrt.gtfs_stop_times 
+  WHERE    trip_index IS NOT NULL 
+  AND          version = 'smrt_sg_bus' 
+  GROUP BY trip_index 
+  ORDER BY trip_index
